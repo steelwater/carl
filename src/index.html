@@ -155,6 +155,8 @@
     .tile-demon { color: #ff4b4b; font-weight: 900; }
     .tile-exit { color: var(--danger); font-weight: 700; }
     .tile-upstairs { color: var(--accent); font-weight: 800; }
+    .tile-chapel { color: #d9d2ff; font-weight: 900; text-shadow: 0 0 8px currentColor; }
+    .tile-gate { color: var(--gold); font-weight: 800; }
 
     .hud {
       display: grid;
@@ -244,7 +246,7 @@
     <div class="terminal" aria-label="CARL game terminal">
       <div class="terminal-bar">
         <span id="location">Cemetery</span>
-        <span>C.A.R.L. Simulator v<span id="terminalVersion">1.05</span></span>
+        <span>C.A.R.L. Simulator v<span id="terminalVersion">1.09</span></span>
       </div>
       <div class="terminal-content">
         <pre id="game" aria-live="polite"></pre>
@@ -276,7 +278,11 @@
               <br/>
               G/g</strong> ghoul / fleeing ghoul<strong>
                 <br/>
-                t</strong> tombstone (bump to read)</p><p><strong>.</strong> small Chronolith shard<strong>
+                t</strong> tombstone (bump to read)<strong>
+                <br/>
+                V</strong> St. Roch Mortuary Chapel<strong>
+                <br/>
+                =</strong> St. Roch Cemetery Gate</p><p><strong>.</strong> small Chronolith shard<strong>
               <br/>
               O</strong> large Chronolith shard<strong>
                 <br/>
@@ -293,7 +299,7 @@
                 H</strong> hell gate
             </p>
       </section>
-      <section class="tab-panel" id="tab-story"><p><strong>New Orleans, 1878.</strong> In the long age of ghouls, ghosts, fever, and mourning, a boy named Carl follows a luminous Orb into a sealed cemetery mausoleum.</p><p><strong>One Touched</strong> tells the story of Carl and created the Chronolith Adventure Runic Labyrinth Simulator of what happened.</p></section>
+      <section class="tab-panel" id="tab-story"><p><strong>St. Roch Cemetery, New Orleans, 1878.</strong> In the long age of ghouls, ghosts, fever, and mourning, a boy named Carl follows a luminous Orb into a sealed cemetery mausoleum.</p><p><strong>Dark4nal0g</strong> a programmer in New Orleans, 2101, tells the story of Carl through the Chronolith Adventure Runic Labyrinth Simulator.</p></section>
       <section class="tab-panel" id="tab-help">
         <p><strong>Goal</strong><br>Guide Carl through three Mausoleum depths, defeat the Demon, let the Orb absorb the glowing Rune, then return to the Cemetery.</p>
         <p><strong>Turns & Movement</strong><br>Movement and Orb activation advance the simulation. Carl moves one tile normally and up to two tiles while powered. Ghouls move after Carl.</p>
@@ -329,6 +335,8 @@
     SHARD: '.',
     CHARGE: 'O',
     MAUSOLEUM: 'M',
+    CHAPEL: 'V',
+    CEMETERY_GATE: '=',
     UPSTAIRS: '<',
     KEY: 'k',
     DEMON: 'D',
@@ -388,7 +396,9 @@
       this.turn = 0;
       this.gameState = 'playing';
       this.pendingTransition = null;
+      this.secretBuffer = '';
       this.relicSecured = false;
+      this.hellGateWasNearby = false;
       this.message = 'A strange terminal awakens in Carl\'s hands. Its shell folds into a luminous orb.';
       this.log = [];
       this.addLog(this.message, 0);
@@ -441,7 +451,7 @@
         this.charges = saved.charges.map(entity => ({ ...entity }));
         this.key = saved.key ? { ...saved.key } : null;
         this.exit = saved.exit ? { ...saved.exit } : null;
-        this.demon = saved.demon ? { ...saved.demon } : null;
+        this.demon = saved.demon ? { alerted: false, ...saved.demon } : null;
         this.relic = saved.relic ? { ...saved.relic } : null;
         this.tombstones = saved.tombstones ? saved.tombstones.map(stone => ({ ...stone })) : [];
         this.carl.hasKey = saved.hasKey;
@@ -460,7 +470,7 @@
         this.explored = Array.from({ length: this.height }, () => Array(this.width).fill(false));
 
         if (floor === 0) {
-          this.placeCemeteryEntrance();
+          this.placeCemeteryFeatures();
           this.createTombstoneRecords();
         } else if (floor < this.maxFloor) {
           this.ghouls = this.placeEntities(3 + floor, () => ({ hp: 1 }));
@@ -471,7 +481,7 @@
         } else {
           this.ghouls = this.placeEntities(4, () => ({ hp: 1 }));
           this.charges = this.placeEntities(5);
-          this.demon = { ...this.findFarthestOpenTile(), hp: 12, maxHp: 12 };
+          this.demon = { ...this.findFarthestOpenTile(), hp: 12, maxHp: 12, alerted: false };
           this.relic = { ...this.placeEntity([this.demon]) };
           this.exit = { ...this.placeEntity([this.demon, this.relic]), symbol: SYMBOL.HELL };
         }
@@ -485,6 +495,9 @@
       if (direction === 'up' && this.exit) {
         this.carl.x = this.exit.x;
         this.carl.y = this.exit.y;
+      } else if (floor === 0 && this.cemeteryStart) {
+        this.carl.x = this.cemeteryStart.x;
+        this.carl.y = this.cemeteryStart.y;
       } else {
         this.carl.x = 1;
         this.carl.y = 1;
@@ -522,20 +535,45 @@
         )
       );
 
-      for (let y = 2; y < this.height - 1; y++) {
-        for (let x = 2; x < this.width - 1; x++) {
-          if (Math.random() < 0.17 && !(x < 5 && y < 5)) map[y][x] = SYMBOL.TOMBSTONE;
+      const centerX = Math.floor(this.width / 2);
+      const gateY = this.height - 1;
+      const startY = this.height - 2;
+
+      // The main southern approach remains clear from the gate to the chapel.
+      for (let y = 1; y < this.height - 1; y++) map[y][centerX] = SYMBOL.FLOOR;
+
+      // Tomb rows flank the central processional path.
+      for (let y = 2; y < this.height - 2; y++) {
+        for (let x = 1; x < this.width - 1; x++) {
+          const nearCenterPath = Math.abs(x - centerX) <= 1;
+          const chapelGround = y <= 2 && Math.abs(x - centerX) <= 3;
+          const mausoleumGround = x >= this.width - 5 && y <= 4;
+          if (!nearCenterPath && !chapelGround && !mausoleumGround && Math.random() < 0.24) {
+            map[y][x] = SYMBOL.TOMBSTONE;
+          }
         }
       }
 
-      this.carveGuaranteedPath(map, { x: 1, y: 1 }, { x: this.width - 3, y: this.height - 3 });
+      // A few low walls suggest burial plots while preserving walkable lanes.
+      for (let x = 2; x < this.width - 2; x += 4) {
+        if (x !== centerX) map[5][x] = SYMBOL.WALL;
+      }
+
+      map[1][centerX] = SYMBOL.CHAPEL;
+      map[gateY][centerX] = SYMBOL.CEMETERY_GATE;
+      map[startY][centerX] = SYMBOL.FLOOR;
       return map;
     }
 
-    placeCemeteryEntrance() {
-      const target = { x: this.width - 3, y: this.height - 3 };
+    placeCemeteryFeatures() {
+      const centerX = Math.floor(this.width / 2);
+      this.cemeteryStart = { x: centerX, y: this.height - 2 };
+
+      // The sealed mausoleum hiding the labyrinth sits away from the chapel.
+      const target = { x: this.width - 3, y: 2 };
       this.map[target.y][target.x] = SYMBOL.FLOOR;
       this.exit = { ...target, symbol: SYMBOL.MAUSOLEUM };
+      this.carveGuaranteedPath(this.map, this.cemeteryStart, target);
     }
 
 
@@ -702,6 +740,11 @@
       window.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
 
+        if (this.handleSecretCode(key)) {
+          event.preventDefault();
+          return;
+        }
+
         if (this.pendingTransition) {
           if (key === 'y') {
             event.preventDefault();
@@ -752,6 +795,23 @@
       });
     }
 
+
+    handleSecretCode(key) {
+      const secret = 'wwssadadqe';
+      if (key.length !== 1) return false;
+
+      this.secretBuffer = (this.secretBuffer + key).slice(-secret.length);
+      if (this.secretBuffer !== secret) return false;
+
+      this.secretBuffer = '';
+      this.carl.charges = 2;
+      this.carl.hp = this.carl.maxHp;
+      this.carl.defense = this.carl.maxDefense;
+      this.setMessage('A hidden Rune answers. Carl and the Orb are fully restored.');
+      this.render();
+      return true;
+    }
+
     moveCarl(dx, dy) {
       if (this.gameState !== 'playing') return;
       const steps = this.carl.orbTurns > 0 ? 2 : 1;
@@ -760,8 +820,13 @@
         const x = this.carl.x + dx;
         const y = this.carl.y + dy;
         if (!this.isWalkable(x, y)) {
-          if (this.floor === 0 && this.map[y]?.[x] === SYMBOL.TOMBSTONE) {
+          const blockedSymbol = this.map[y]?.[x];
+          if (this.floor === 0 && blockedSymbol === SYMBOL.TOMBSTONE) {
             this.inspectTombstone(x, y);
+          } else if (this.floor === 0 && blockedSymbol === SYMBOL.CEMETERY_GATE) {
+            this.setMessage('St Roch Cemetery Gate');
+          } else if (this.floor === 0 && blockedSymbol === SYMBOL.CHAPEL) {
+            this.setMessage("St. Roch Mortuary Chapel. It's Locked");
           } else {
             this.setMessage('Stone blocks the way.');
           }
@@ -793,6 +858,7 @@
 
         this.carl.x = x; this.carl.y = y;
         this.collectAtCarl();
+        this.checkHellGateProximity();
       }
       this.finishTurn();
     }
@@ -902,7 +968,7 @@
 
     attackDemon() {
       if (this.carl.orbTurns <= 0) {
-        this.applyDamage(4, 'Ordinary attacks cannot harm the Demon. Its shadow burns Carl');
+        this.setMessage('Ordinary attacks cannot harm the Demon. Its shadow gathers to strike.');
         return;
       }
 
@@ -981,13 +1047,14 @@
 
       this.turn += 1;
       this.moveGhouls();
+      this.moveDemon();
       this.damageFromAdjacentEnemies();
 
       if (this.carl.orbTurns > 0) this.carl.orbTurns -= 1;
       if (this.carl.hp <= 0) {
         this.carl.hp = 0;
         this.gameState = 'lost';
-        this.setMessage('Carl was eaten by a Ghoul. Press R to restart simulation.');
+        this.setMessage('Carl has fallen in the Mausoleum. Press R to restart simulation.');
       }
 
       this.updateVisibility();
@@ -1024,8 +1091,52 @@
       }
     }
 
+    moveDemon() {
+      if (!this.demon || this.demon.hp <= 0 || this.floor !== this.maxFloor) return;
+
+      const distance = Math.abs(this.demon.x - this.carl.x) + Math.abs(this.demon.y - this.carl.y);
+      if (distance <= 1) return;
+
+      const seesCarl = this.hasLineOfSight(this.demon.x, this.demon.y, this.carl.x, this.carl.y);
+      if (seesCarl) this.demon.alerted = true;
+      if (!this.demon.alerted) return;
+
+      const blocked = new Set(this.ghouls.map(ghoul => `${ghoul.x},${ghoul.y}`));
+      if (this.relic) blocked.add(`${this.relic.x},${this.relic.y}`);
+      if (this.exit) blocked.add(`${this.exit.x},${this.exit.y}`);
+
+      const path = this.shortestPath(this.demon, this.carl, blocked);
+      const next = path[0];
+      if (!next || (next.x === this.carl.x && next.y === this.carl.y)) return;
+
+      this.demon.x = next.x;
+      this.demon.y = next.y;
+    }
+
+    checkHellGateProximity() {
+      if (!this.exit || this.exit.symbol !== SYMBOL.HELL || this.floor !== this.maxFloor) {
+        this.hellGateWasNearby = false;
+        return;
+      }
+
+      const nearby = Math.abs(this.exit.x - this.carl.x) + Math.abs(this.exit.y - this.carl.y) <= 1;
+      if (nearby && !this.hellGateWasNearby) {
+        this.setMessage('Hell Gate');
+      }
+      this.hellGateWasNearby = nearby;
+    }
+
     damageFromAdjacentEnemies() {
+      const demonAdjacent = this.demon && this.demon.hp > 0 &&
+        Math.abs(this.demon.x - this.carl.x) + Math.abs(this.demon.y - this.carl.y) === 1;
+
+      if (demonAdjacent) {
+        this.applyDamage(4, 'The Demon strikes Carl');
+        if (this.carl.hp <= 0) return;
+      }
+
       if (this.carl.orbTurns > 0) return;
+
       const attackers = this.ghouls.filter(ghoul =>
         Math.abs(ghoul.x - this.carl.x) + Math.abs(ghoul.y - this.carl.y) === 1
       ).length;
@@ -1103,7 +1214,35 @@
       if (this.floor > 0 && x === 1 && y === 1) return { symbol: SYMBOL.UPSTAIRS, className: 'tile-upstairs' };
       if (this.exit && this.exit.x === x && this.exit.y === y) return { symbol: this.exit.symbol || SYMBOL.MAUSOLEUM, className: 'tile-exit' };
       const symbol = this.map[y][x];
-      return { symbol, className: symbol === SYMBOL.WALL ? 'tile-wall' : '' };
+      const className = symbol === SYMBOL.WALL
+        ? 'tile-wall'
+        : symbol === SYMBOL.CHAPEL
+          ? 'tile-chapel'
+          : symbol === SYMBOL.CEMETERY_GATE
+            ? 'tile-gate'
+            : '';
+      return { symbol, className };
+    }
+
+    rememberedTileAt(x, y) {
+      // Explored memory keeps only permanent architecture. Moving creatures,
+      // the Demon, relics, keys, and Chronolith shards require current sight.
+      if (this.floor > 0 && x === 1 && y === 1) {
+        return { symbol: SYMBOL.UPSTAIRS, className: 'tile-upstairs' };
+      }
+      if (this.exit && this.exit.x === x && this.exit.y === y) {
+        return { symbol: this.exit.symbol || SYMBOL.MAUSOLEUM, className: 'tile-exit' };
+      }
+
+      const symbol = this.map[y][x];
+      const className = symbol === SYMBOL.WALL
+        ? 'tile-wall'
+        : symbol === SYMBOL.CHAPEL
+          ? 'tile-chapel'
+          : symbol === SYMBOL.CEMETERY_GATE
+            ? 'tile-gate'
+            : '';
+      return { symbol, className };
     }
 
     escapeHtml(value) {
@@ -1121,18 +1260,17 @@
             continue;
           }
 
-          const tile = this.tileAt(x, y);
+          const tile = visible ? this.tileAt(x, y) : this.rememberedTileAt(x, y);
           const visibilityClass = visible
             ? `tile-visible${this.floor > 0 ? ' tile-line-of-sight' : ''}`
             : 'tile-explored';
-          const entityClass = visible ? tile.className : (tile.symbol === SYMBOL.WALL ? 'tile-wall' : '');
-          output += `<span class="${visibilityClass} ${entityClass}">${this.escapeHtml(tile.symbol)}</span>`;
+          output += `<span class="${visibilityClass} ${tile.className}">${this.escapeHtml(tile.symbol)}</span>`;
         }
         output += '\n';
       }
 
       document.getElementById('game').innerHTML = output;
-      document.getElementById('location').textContent = this.floor === 0 ? 'Cemetery' : `Mausoleum ${this.floor}/${this.maxFloor}`;
+      document.getElementById('location').textContent = this.floor === 0 ? 'St. Roch Cemetery, New Orleans, 1878' : `Mausoleum ${this.floor}/${this.maxFloor}`;
       document.getElementById('vitals').innerHTML = `<p><strong>Carl:</strong></p><p><strong>HP</strong> ${this.carl.hp}/${this.carl.maxHp}</p>`;
       document.getElementById('resources').innerHTML = `<p><strong>Orb:</strong></p><p><strong>LV</strong> ${this.carl.level}</p><p><strong>XP</strong> ${this.carl.xp}%</p><p><strong>DEFENSIVE AURA</strong> ${this.carl.defense}/${this.carl.maxDefense}</p><p><strong>LIGHT AURAS</strong> ${this.carl.charges}</p><p><strong>LIGHT SKILL</strong> ${this.carl.lightAura}</p><p><strong>SMALL SHARDS</strong> ${this.carl.shards}</p><p><strong>ORB POINTS TO SPEND</strong> ${this.carl.points}</p>`;
       document.getElementById('progress').innerHTML = `<p><strong>Simulation:</strong></p><p><strong>TURN</strong> ${this.turn}</p>`;
@@ -1146,7 +1284,7 @@
     objectiveText() {
       if (this.gameState === 'won') return 'Carl’s Runic Adventure is complete. Press R to replay.';
       if (this.gameState === 'lost') return 'Press R to restart.';
-      if (this.floor === 0) return 'Reach M.';
+      if (this.floor === 0) return 'Explore St. Roch Cemetery and reach the sealed M.';
       if (this.floor < this.maxFloor) return this.carl.hasKey ? 'Reach M. Use < to retreat.' : 'Find k, then M. Use < to retreat.';
       if (this.demon && this.demon.hp > 0) return `Defeat D (${this.demon.hp}/${this.demon.maxHp} HP). Use < to retreat.`;
       return this.relicSecured ? 'Return to the cemetery through <.' : 'Collect the glowing R, then retreat through <.';
