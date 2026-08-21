@@ -157,6 +157,7 @@
     .tile-upstairs { color: var(--accent); font-weight: 800; }
     .tile-chapel { color: #d9d2ff; font-weight: 900; text-shadow: 0 0 8px currentColor; }
     .tile-gate { color: var(--gold); font-weight: 800; }
+    .tile-strange-tombstone { color: var(--gold); font-weight: 900; text-shadow: 0 0 7px currentColor; }
 
     .hud {
       display: grid;
@@ -246,7 +247,7 @@
     <div class="terminal" aria-label="CARL game terminal">
       <div class="terminal-bar">
         <span id="location">Cemetery</span>
-        <span>C.A.R.L. Simulator v<span id="terminalVersion">1.09</span></span>
+        <span>C.A.R.L. Simulator v<span id="terminalVersion">1.10</span></span>
       </div>
       <div class="terminal-content">
         <pre id="game" aria-live="polite"></pre>
@@ -278,7 +279,7 @@
               <br/>
               G/g</strong> ghoul / fleeing ghoul<strong>
                 <br/>
-                t</strong> tombstone (bump to read)<strong>
+                t/ŧ</strong> tombstone (bump to read)<strong>
                 <br/>
                 V</strong> St. Roch Mortuary Chapel<strong>
                 <br/>
@@ -369,6 +370,29 @@
     'Barron', 'Bradish', 'Caldwell', 'Grymes', 'Kenner', 'Livingston', 'McDonogh', 'Slidell', 'Twiggs'
   ]);
 
+  const SECRET_CLUES = Object.freeze({
+    chapel: Object.freeze([
+      'The stone bears scratches that seem too deliberate to be weathering.',
+      'For a moment, the ORB pulses as Carl retraces his steps.',
+      'A faded inscription mentions a ritual performed without words.',
+      'The marks seem arranged in pairs, though their meaning is lost.',
+      'Something about the pattern feels unfinished.'
+    ]),
+    gate: Object.freeze([
+      'An old carving shows footsteps: forward, forward… then back.',
+      'The inscription repeats: “twice toward, twice away.”',
+      'The ORB flickers when Carl changes direction in a deliberate rhythm.',
+      'Four directions are carved into the stone. Two other symbols follow.',
+      'The final marks are not footsteps.'
+    ]),
+    tombstone: Object.freeze([
+      'A peculiar sequence is scratched beneath the moss: ↑ ↑ ↓ ↓ ← → ← → …',
+      'The first eight marks describe movement. The last two do not.',
+      'A weathered hand has carved: “walk the pattern, then invoke and release.”',
+      'The ORB hums at the sequence: forward, forward, back, back, left, right, left, right…'
+    ])
+  });
+
   const TOMBSTONE_EPITAPHS = Object.freeze([
     'Cut down in the morning of life.', 'The pestilence walketh in darkness.', 'A sudden change, a violent blow.', 'Snatched by the fever’s cruel hand.', 'The stranger fell in a foreign land.', 'A bloom withered before the noon.', 'The golden bowl is broken.', 'In the midst of life, we are in death.', 'Fever claimed what earth held dear.', 'Swept away by the raging plague.',
     'Asleep in Jesus, blessed sleep.', 'Thy will, O Lord, be done.', 'The Lord gave, and the Lord hath taken away.', 'An angel took my flower away.', 'Not lost, but gone before.', 'Gone to absolute rest with God.', 'Blessed are the dead who die in the Lord.', 'The soul has flown to brighter realms.', 'Safe in the arms of Jesus.', 'He giveth His beloved sleep.',
@@ -397,6 +421,7 @@
       this.gameState = 'playing';
       this.pendingTransition = null;
       this.secretBuffer = '';
+      this.secretClueDecks = {};
       this.relicSecured = false;
       this.hellGateWasNearby = false;
       this.message = 'A strange terminal awakens in Carl\'s hands. Its shell folds into a luminous orb.';
@@ -596,10 +621,25 @@
             name: `${this.randomItem(TOMBSTONE_NAMES[gender])} ${this.randomItem(TOMBSTONE_SURNAMES)}`,
             born: deathYear - age,
             died: deathYear,
-            epitaph: this.randomItem(TOMBSTONE_EPITAPHS)
+            epitaph: this.randomItem(TOMBSTONE_EPITAPHS),
+            strange: false
           });
         }
       }
+
+      // One grave per cemetery is visibly unusual and carries the strongest ritual clues.
+      if (this.tombstones.length) {
+        this.randomItem(this.tombstones).strange = true;
+      }
+    }
+
+    nextSecretClue(source) {
+      const clues = SECRET_CLUES[source];
+      if (!clues?.length) return '';
+      if (!this.secretClueDecks[source]?.length) {
+        this.secretClueDecks[source] = this.shuffle([...clues]);
+      }
+      return this.secretClueDecks[source].pop();
     }
 
     inspectTombstone(x, y) {
@@ -609,7 +649,13 @@
         stone = this.tombstones.find(item => item.x === x && item.y === y);
       }
       if (!stone) return false;
-      this.setMessage(`Carl reads: ${stone.name} (${stone.born}–${stone.died}) — “${stone.epitaph}”`);
+
+      if (stone.strange) {
+        const clue = this.nextSecretClue('tombstone');
+        this.setMessage(`Carl reads: ${stone.name} (${stone.born}–${stone.died}) — “${stone.epitaph}” Beneath it: ${clue}`);
+      } else {
+        this.setMessage(`Carl reads: ${stone.name} (${stone.born}–${stone.died}) — “${stone.epitaph}”`);
+      }
       return true;
     }
 
@@ -807,7 +853,7 @@
       this.carl.charges = 2;
       this.carl.hp = this.carl.maxHp;
       this.carl.defense = this.carl.maxDefense;
-      this.setMessage('A hidden Rune answers. Carl and the Orb are fully restored.');
+      this.setMessage('The Secret pattern done. The Rune answers. Carl and the Orb are fully restored.');
       this.render();
       return true;
     }
@@ -824,9 +870,9 @@
           if (this.floor === 0 && blockedSymbol === SYMBOL.TOMBSTONE) {
             this.inspectTombstone(x, y);
           } else if (this.floor === 0 && blockedSymbol === SYMBOL.CEMETERY_GATE) {
-            this.setMessage('St Roch Cemetery Gate');
+            this.setMessage(`St Roch Cemetery Gate — ${this.nextSecretClue('gate')}`);
           } else if (this.floor === 0 && blockedSymbol === SYMBOL.CHAPEL) {
-            this.setMessage("St. Roch Mortuary Chapel. It's Locked");
+            this.setMessage(`St. Roch Mortuary Chapel. It's Locked — ${this.nextSecretClue('chapel')}`);
           } else {
             this.setMessage('Stone blocks the way.');
           }
@@ -1213,6 +1259,8 @@
       }
       if (this.floor > 0 && x === 1 && y === 1) return { symbol: SYMBOL.UPSTAIRS, className: 'tile-upstairs' };
       if (this.exit && this.exit.x === x && this.exit.y === y) return { symbol: this.exit.symbol || SYMBOL.MAUSOLEUM, className: 'tile-exit' };
+      const tombstone = this.floor === 0 && this.tombstones?.find(stone => stone.x === x && stone.y === y);
+      if (tombstone?.strange) return { symbol: 'ŧ', className: 'tile-strange-tombstone' };
       const symbol = this.map[y][x];
       const className = symbol === SYMBOL.WALL
         ? 'tile-wall'
@@ -1233,6 +1281,9 @@
       if (this.exit && this.exit.x === x && this.exit.y === y) {
         return { symbol: this.exit.symbol || SYMBOL.MAUSOLEUM, className: 'tile-exit' };
       }
+
+      const tombstone = this.floor === 0 && this.tombstones?.find(stone => stone.x === x && stone.y === y);
+      if (tombstone?.strange) return { symbol: 'ŧ', className: 'tile-strange-tombstone' };
 
       const symbol = this.map[y][x];
       const className = symbol === SYMBOL.WALL
