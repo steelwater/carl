@@ -33,7 +33,9 @@ The Orb feeds on fragments of Chronolith and grows stronger as Carl descends. Be
 
 Guide Carl into the depths, defeat the Demon, allow the Orb to absorb the Rune, and return to the cemetery alive.
 
-Within the fiction, **One Touched** preserved Carl's story by creating the simulator of what happened.
+Within CaRL's framing, **Dark4nal0g**, a programmer in **New Orleans, 2026**, tells Carl's **1878** story through the simulator. **Steelwater** is the real-world creator of the game.
+
+Earlier project materials credit **One Touched** with preserving Carl's story. Its precise relationship to Dark4nal0g has not been established; this remains an open lore question rather than a settled character identity. See [Lore & Authorship](docs/lore-authorship.md).
 
 ---
 
